@@ -1,0 +1,20 @@
+services:
+  retail-app:
+    build:
+      context: .
+    image: retail-app:${VERSION:-4.2.1}
+    container_name: retail-app-${VERSION:-4.2.1}
+    ports:
+      - "8081:8081"
+    environment:
+      APP_VERSION: "${VERSION:-4.2.1}"
+      ENVIRONMENT: "${ENVIRONMENT:-production}"
+      PAYMENT_MODE: "${PAYMENT_MODE:-fixed}"
+      FAIL_HEALTH: "${FAIL_HEALTH:-false}"
+    networks:
+      - retail-network
+    restart: unless-stopped
+
+networks:
+  retail-network:
+    name: retail-network
