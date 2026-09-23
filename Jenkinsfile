@@ -24,7 +24,7 @@ pipeline {
                     if (params.ENVIRONMENT == 'PRODUCTION' && params.DEPLOYMENT_ACTION == 'DEPLOY' && params.CONFIRM_PROD != 'YES') {
                         error('PRODUCTION deployment blocked: CONFIRM_PROD must be YES')
                     }
-                    if (!(params.VERSION ==~ /[0-9]+\\.[0-9]+\\.[0-9]+/)) {
+                    if (!(params.VERSION ==~ /[0-9]+\.[0-9]+\.[0-9]+/)) {
                         error("Invalid VERSION: ${params.VERSION}")
                     }
                 }
