@@ -126,8 +126,9 @@ bat 'python -m pytest -q'                           }
                 bat 'docker rm -f retail-app-prod >nul 2>&1 || exit /b 0'
                 bat 'docker rm -f %CANDIDATE% >nul 2>&1 || exit /b 0'
                 bat 'docker run -d --name retail-app-prod --network %NETWORK% -p %HOST_PORT%:%CONTAINER_PORT% -e APP_VERSION=%VERSION% -e ENVIRONMENT=%ENVIRONMENT% -e PAYMENT_MODE=fixed -e FAIL_HEALTH=false %IMAGE%'
-                bat 'docker inspect --format "{{.State.Health.Status}}" retail-app-prod'
-                bat 'curl.exe -fsS http://localhost:%HOST_PORT%/health'
+                bat 'timeout /t 15 /nobreak >nul'
+bat 'docker inspect --format "{{.State.Health.Status}}" retail-app-prod'
+bat 'curl.exe -fsS http://localhost:%HOST_PORT%/health'
             }
         }
 
