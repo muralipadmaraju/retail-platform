@@ -48,9 +48,9 @@ pipeline {
 
         stage('Unit Tests') {
             steps {
-bat '"C:/Users/Administrator/AppData/Local/Python/bin/python.exe" -m pip install -r requirements.txt'
-bat '"C:/Users/Administrator/AppData/Local/Python/bin/python.exe" -m pytest -q'
-                           }
+bat 'where python'
+bat 'python -m pip install -r requirements.txt'
+bat 'python -m pytest -q'                           }
         }
 
         stage('Build Versioned Image') {
