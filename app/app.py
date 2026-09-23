@@ -31,6 +31,16 @@ def payment():
         "defect_fixed": PAYMENT_MODE == "fixed",
         "version": VERSION,
     })
+@app.get("/products")
+def products():
+    return jsonify({
+        "products": [
+            {"id": 1, "name": "Laptop", "price": 55000},
+            {"id": 2, "name": "Smartphone", "price": 25000},
+            {"id": 3, "name": "Headphones", "price": 3000}
+        ],
+        "version": VERSION
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8081")))
