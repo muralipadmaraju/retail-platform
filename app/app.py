@@ -42,6 +42,27 @@ def payment():
         "payment_reference": payment_reference,
         "version": VERSION,
         })
+@app.get("/products")
+def products():
+    search = os.getenv("PRODUCT_SEARCH", "").lower()
+
+    product_list = [
+        {"id": 1, "name": "Laptop", "price": 55000},
+        {"id": 2, "name": "Smartphone", "price": 25000},
+        {"id": 3, "name": "Headphones", "price": 3000}
+    ]
+
+    if search:
+        product_list = [
+            product for product in product_list
+            if search in product["name"].lower()
+        ]
+
+    return jsonify({
+        "products": product_list,
+        "count": len(product_list),
+        "version": VERSION
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8081")))
