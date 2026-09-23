@@ -48,8 +48,8 @@ pipeline {
 
         stage('Unit Tests') {
             steps {
-                bat 'py -m pip install -r requirements.txt'
-                bat 'py -m pytest -q'
+                bat '"C:\Users\Administrator\AppData\Local\Python\bin\python.exe" -m pip install -r requirements.txt'
+bat '"C:\Users\Administrator\AppData\Local\Python\bin\python.exe" -m pytest -q'
             }
         }
 
