@@ -42,9 +42,7 @@ pipeline {
     stages {
 
         stage('Validate Parameters') {
-
             steps {
-
                 script {
 
                     if (
@@ -52,7 +50,9 @@ pipeline {
                         params.DEPLOYMENT_ACTION == 'DEPLOY' &&
                         params.CONFIRM_PROD != 'YES'
                     ) {
-                        error('PRODUCTION deployment blocked: CONFIRM_PROD must be YES')
+                        error(
+                            'PRODUCTION deployment blocked: CONFIRM_PROD must be YES'
+                        )
                     }
 
                     if (!(params.VERSION ==~ /[0-9]+\.[0-9]+\.[0-9]+/)) {
@@ -63,7 +63,6 @@ pipeline {
         }
 
         stage('Checkout and Identify Commit') {
-
             steps {
 
                 checkout scm
@@ -85,6 +84,7 @@ pipeline {
             steps {
 
                 bat 'git rev-parse "refs/tags/v%VERSION%"'
+
             }
         }
 
@@ -112,9 +112,11 @@ pipeline {
 
                 script {
 
-                    env.IMAGE = "${APP_NAME}:${params.VERSION}-${env.BUILD_NUMBER}"
+                    env.IMAGE =
+                        "${APP_NAME}:${params.VERSION}-${env.BUILD_NUMBER}"
 
-                    env.CANDIDATE = "${APP_NAME}-candidate-${env.BUILD_NUMBER}"
+                    env.CANDIDATE =
+                        "${APP_NAME}-candidate-${env.BUILD_NUMBER}"
                 }
 
                 bat 'docker build -t %IMAGE% .'
@@ -139,11 +141,38 @@ pipeline {
 
             steps {
 
-                bat 'docker ps --filter "name=retail-app-prod" --format "{{.Image}}" > previous-production-image.txt'
+                script {
 
-                bat 'if not exist previous-production-image.txt type nul > previous-production-image.txt'
+                    int rc = bat(
+                        returnStatus: true,
+                        script: 'docker ps --filter "name=retail-app-prod" --format "{{.Image}}" > previous-production-image.txt'
+                    )
 
-                bat 'echo Previous production image: & type previous-production-image.txt'
+                    if (rc != 0) {
+                        error('Could not determine current production image.')
+                    }
+
+                    bat 'echo Previous production image:'
+
+                    bat 'type previous-production-image.txt'
+
+                    script {
+
+                        def previousImage =
+                            readFile('previous-production-image.txt').trim()
+
+                        if (!previousImage) {
+
+                            error(
+                                'No running production image found. Cannot safely deploy to production.'
+                            )
+                        }
+
+                        env.PREVIOUS_IMAGE = previousImage
+
+                        echo "Previous production image = ${env.PREVIOUS_IMAGE}"
+                    }
+                }
             }
         }
 
@@ -159,20 +188,42 @@ pipeline {
 
                 script {
 
-                    // Mandatory failure injection:
-                    // v4.2.2 starts normally but its health endpoint returns 500.
+                    /*
+                     * Mandatory failure injection.
+                     *
+                     * Version 4.2.2 deliberately returns HTTP 500
+                     * from /health.
+                     */
 
                     env.FAIL_HEALTH =
-                        (params.VERSION == '4.2.2') ? 'true' : 'false'
+                        (params.VERSION == '4.2.2')
+                        ? 'true'
+                        : 'false'
                 }
 
-                bat 'echo Failure injection FAIL_HEALTH=%FAIL_HEALTH%'
+                bat 'echo FAIL_HEALTH=%FAIL_HEALTH%'
 
-                bat 'docker network inspect %NETWORK% >nul 2>&1 || docker network create %NETWORK%'
+                bat '''
+                    docker network inspect %NETWORK% >nul 2>&1 || docker network create %NETWORK%
+                '''
 
-                bat 'docker rm -f %CANDIDATE% >nul 2>&1 || exit /b 0'
+                bat '''
+                    docker rm -f %CANDIDATE% >nul 2>&1 || exit /b 0
+                '''
 
-                bat 'docker run -d --name %CANDIDATE% --memory 512m --cpus 0.5 --network %NETWORK% -p %CANDIDATE_PORT%:%CONTAINER_PORT% -e APP_VERSION=%VERSION% -e ENVIRONMENT=%ENVIRONMENT% -e PAYMENT_MODE=fixed -e FAIL_HEALTH=%FAIL_HEALTH% %IMAGE%'
+                bat '''
+                    docker run -d ^
+                    --name %CANDIDATE% ^
+                    --memory 512m ^
+                    --cpus 0.5 ^
+                    --network %NETWORK% ^
+                    -p %CANDIDATE_PORT%:%CONTAINER_PORT% ^
+                    -e APP_VERSION=%VERSION% ^
+                    -e ENVIRONMENT=%ENVIRONMENT% ^
+                    -e PAYMENT_MODE=fixed ^
+                    -e FAIL_HEALTH=%FAIL_HEALTH% ^
+                    %IMAGE%
+                '''
             }
         }
 
@@ -188,7 +239,9 @@ pipeline {
 
                 bat 'docker ps --filter "name=%CANDIDATE%"'
 
-                bat 'docker inspect --format "{{.State.Status}}" %CANDIDATE%'
+                bat '''
+                    docker inspect --format "{{.State.Status}}" %CANDIDATE%
+                '''
             }
         }
 
@@ -205,7 +258,6 @@ pipeline {
                 script {
 
                     int attempts = 10
-
                     boolean healthy = false
 
                     for (int i = 1; i <= attempts; i++) {
@@ -221,6 +273,8 @@ pipeline {
 
                             healthy = true
 
+                            echo 'Candidate health check PASSED.'
+
                             break
                         }
 
@@ -230,7 +284,7 @@ pipeline {
                     if (!healthy) {
 
                         error(
-                            'Health check failed; automatic rollback will run in post/finally logic.'
+                            'Health check failed. Automatic rollback protection will execute.'
                         )
                     }
                 }
@@ -247,23 +301,47 @@ pipeline {
 
             steps {
 
-                echo 'Candidate passed validation; switching production to the validated image.'
+                echo 'Candidate passed validation.'
 
-                bat 'docker rm -f retail-app-prod >nul 2>&1 || exit /b 0'
+                echo 'Promoting validated candidate to production.'
 
-                bat 'docker rm -f %CANDIDATE% >nul 2>&1 || exit /b 0'
+                bat '''
+                    docker rm -f retail-app-prod >nul 2>&1 || exit /b 0
+                '''
 
-                bat 'docker run -d --name retail-app-prod --memory 512m --cpus 0.5 --network %NETWORK% -p %HOST_PORT%:%CONTAINER_PORT% -e APP_VERSION=%VERSION% -e ENVIRONMENT=%ENVIRONMENT% -e PAYMENT_MODE=fixed -e FAIL_HEALTH=false %IMAGE%'
+                bat '''
+                    docker rm -f %CANDIDATE% >nul 2>&1 || exit /b 0
+                '''
 
-                bat 'powershell -NoProfile -Command "Start-Sleep -Seconds 15"'
+                bat '''
+                    docker run -d ^
+                    --name retail-app-prod ^
+                    --memory 512m ^
+                    --cpus 0.5 ^
+                    --network %NETWORK% ^
+                    -p %HOST_PORT%:%CONTAINER_PORT% ^
+                    -e APP_VERSION=%VERSION% ^
+                    -e ENVIRONMENT=%ENVIRONMENT% ^
+                    -e PAYMENT_MODE=fixed ^
+                    -e FAIL_HEALTH=false ^
+                    %IMAGE%
+                '''
 
-                bat 'docker inspect --format "{{.State.Health.Status}}" retail-app-prod'
+                bat '''
+                    powershell -NoProfile -Command "Start-Sleep -Seconds 15"
+                '''
 
-                bat 'curl.exe -fsS http://localhost:%HOST_PORT%/health'
+                bat '''
+                    docker inspect --format "{{.State.Health.Status}}" retail-app-prod
+                '''
+
+                bat '''
+                    curl.exe -fsS http://localhost:%HOST_PORT%/health
+                '''
             }
         }
 
-        stage('Rollback') {
+        stage('Manual Rollback') {
 
             when {
                 expression {
@@ -273,9 +351,39 @@ pipeline {
 
             steps {
 
-                bat 'if not exist previous-production-image.txt exit /b 1'
+                script {
 
-                bat 'for /f "delims=" %%I in (previous-production-image.txt) do docker run -d --name retail-app-prod --memory 512m --cpus 0.5 --network %NETWORK% -p %HOST_PORT%:%CONTAINER_PORT% -e APP_VERSION=4.2.1 -e ENVIRONMENT=PRODUCTION -e PAYMENT_MODE=fixed %%I'
+                    def previousImage =
+                        fileExists(env.STATE_FILE)
+                        ? readFile(env.STATE_FILE).trim()
+                        : ''
+
+                    if (!previousImage) {
+                        error(
+                            'Rollback requested but previous-production-image.txt is empty or missing.'
+                        )
+                    }
+
+                    echo "Restoring previous production image: ${previousImage}"
+
+                    bat '''
+                        docker rm -f retail-app-prod >nul 2>&1 || exit /b 0
+                    '''
+
+                    bat """
+                        docker run -d ^
+                        --name retail-app-prod ^
+                        --memory 512m ^
+                        --cpus 0.5 ^
+                        --network %NETWORK% ^
+                        -p %HOST_PORT%:%CONTAINER_PORT% ^
+                        -e APP_VERSION=4.2.1 ^
+                        -e ENVIRONMENT=PRODUCTION ^
+                        -e PAYMENT_MODE=fixed ^
+                        -e FAIL_HEALTH=false ^
+                        ${previousImage}
+                    """
+                }
             }
         }
 
@@ -289,11 +397,19 @@ pipeline {
 
             steps {
 
-                bat 'curl.exe -fsS http://localhost:%HOST_PORT%/health'
+                bat '''
+                    powershell -NoProfile -Command "Start-Sleep -Seconds 15"
+                '''
 
-                bat 'docker inspect --format "{{.State.Health.Status}}" retail-app-prod'
+                bat '''
+                    docker inspect --format "{{.State.Health.Status}}" retail-app-prod
+                '''
 
-                echo 'Rollback validation passed.'
+                bat '''
+                    curl.exe -fsS http://localhost:%HOST_PORT%/health
+                '''
+
+                echo 'Manual rollback validation passed.'
             }
         }
     }
@@ -306,39 +422,115 @@ pipeline {
 
                 if (params.DEPLOYMENT_ACTION == 'DEPLOY') {
 
-                    echo 'Deployment failed. Starting automatic rollback protection.'
+                    echo '============================================'
+                    echo 'DEPLOYMENT FAILED'
+                    echo 'AUTOMATIC ROLLBACK PROTECTION STARTED'
+                    echo '============================================'
 
-                    bat 'docker rm -f %CANDIDATE% >nul 2>&1 || exit /b 0'
+                    /*
+                     * Always remove the failed candidate.
+                     */
+
+                    bat '''
+                        docker rm -f %CANDIDATE% >nul 2>&1 || exit /b 0
+                    '''
+
+                    /*
+                     * For production:
+                     *
+                     * The old production container was intentionally
+                     * kept alive until candidate validation succeeded.
+                     *
+                     * If production is unhealthy, restore the
+                     * previously recorded image.
+                     */
 
                     if (params.ENVIRONMENT == 'PRODUCTION') {
 
-                        if (
-                            bat(
+                        echo 'Production deployment failed.'
+
+                        script {
+
+                            int productionHealth = bat(
                                 returnStatus: true,
                                 script: 'curl.exe -fsS http://localhost:%HOST_PORT%/health >nul 2>&1'
-                            ) != 0
-                        ) {
+                            )
 
-                            bat 'docker rm -f retail-app-prod >nul 2>&1 || exit /b 0'
+                            if (productionHealth == 0) {
 
-                            bat 'if exist previous-production-image.txt for /f "delims=" %%I in (previous-production-image.txt) do docker run -d --name retail-app-prod --memory 512m --cpus 0.5 --network %NETWORK% -p %HOST_PORT%:%CONTAINER_PORT% -e APP_VERSION=4.2.1 -e ENVIRONMENT=PRODUCTION -e PAYMENT_MODE=fixed %%I'
+                                echo 'Existing production container is still healthy.'
+                                echo 'No production restoration was required.'
+                                echo "Previous production image was: ${env.PREVIOUS_IMAGE ?: 'not available'}"
 
-                        } else {
+                            } else {
 
-                            echo 'Previous production container is still healthy; no restoration was necessary.'
+                                echo 'Existing production is unhealthy.'
+                                echo 'Restoring previous production image.'
+
+                                def previousImage =
+                                    fileExists(env.STATE_FILE)
+                                    ? readFile(env.STATE_FILE).trim()
+                                    : ''
+
+                                if (!previousImage) {
+
+                                    error(
+                                        'Automatic rollback failed: previous production image is unavailable.'
+                                    )
+                                }
+
+                                bat '''
+                                    docker rm -f retail-app-prod >nul 2>&1 || exit /b 0
+                                '''
+
+                                bat """
+                                    docker run -d ^
+                                    --name retail-app-prod ^
+                                    --memory 512m ^
+                                    --cpus 0.5 ^
+                                    --network %NETWORK% ^
+                                    -p %HOST_PORT%:%CONTAINER_PORT% ^
+                                    -e APP_VERSION=4.2.1 ^
+                                    -e ENVIRONMENT=PRODUCTION ^
+                                    -e PAYMENT_MODE=fixed ^
+                                    -e FAIL_HEALTH=false ^
+                                    ${previousImage}
+                                """
+
+                                bat '''
+                                    powershell -NoProfile -Command "Start-Sleep -Seconds 15"
+                                '''
+
+                                bat '''
+                                    docker inspect --format "{{.State.Health.Status}}" retail-app-prod
+                                '''
+
+                                bat '''
+                                    curl.exe -fsS http://localhost:%HOST_PORT%/health
+                                '''
+
+                                echo 'Automatic rollback restoration completed successfully.'
+                            }
                         }
                     }
 
-                    echo 'Rollback protection completed. Final Jenkins state remains FAILURE as required.'
+                    echo '============================================'
+                    echo 'ROLLBACK PROTECTION COMPLETED'
+                    echo 'FINAL JENKINS RESULT = FAILURE'
+                    echo '============================================'
                 }
             }
         }
 
         always {
 
-            bat 'docker ps -a --filter "name=retail-app"'
+            bat '''
+                docker ps -a --filter "name=retail-app"
+            '''
 
-            bat 'docker images retail-app'
+            bat '''
+                docker images retail-app
+            '''
         }
 
         success {
